@@ -1,0 +1,717 @@
+https://blog.loginradius.com/engineering/guest-post/session-authentication-with-nestjs-and-mongodb/
+
+Ayuda
+https://aurelienbrabant.fr/blog/session-based-authentication-nestjs
+
+
+0- Instalar dependencias
+
+npm install --save @nestjs/passport passport passport-local
+npm install --save-dev @types/passport-local
+
+0.1- Instalar la conección a MongoDB
+npm install --save @nestjs/mongoose mongoose 
+
+
+1- Configurar la conexión de su base de datos
+
+
+ app.module.ts
+		import { Module } from "@nestjs/common"
+		import { MongooseModule } from "@nestjs/mongoose"
+		import { AppController } from "./app.controller"
+		import { AppService } from "./app.service"
+
+		@Module({
+		  imports: [
+			MongooseModule.forRoot(
+			  "mongodb+srv://<username>:<password>@cluster0.kngtf.mongodb.net/session-auth?retryWrites=true&w=majority"
+			),
+		  ],
+		  controllers: [AppController],
+		  providers: [AppService],
+		})
+		export class AppModule {}
+	
+
+2- 	Crear em módulo de usuarios, servicios y controller
+
+		nest g module users
+		nest g service users
+		nest g controller users
+		
+		
+3- Crear esquema de usuario
+
+		users.model.ts
+
+
+		import * as mongoose from "mongoose"
+		export const UserSchema = new mongoose.Schema(
+		  {
+			username: {
+			  type: String,
+			  required: true,
+			  unique: true,
+			},
+			password: {
+			  type: String,
+			  required: true,
+			},
+		  },
+		  { timestamps: true }
+		)
+
+		export interface User extends mongoose.Document {
+		  _id: string;
+		  username: string;
+		  password: string;
+		} 
+
+4- Crear un interaz para el modelo(un documento que lo ayude a completar sus colecciones de MongoDB.)
+		
+		users.module.ts
+		
+		import { Module } from "@nestjs/common"
+		import { MongooseModule } from "@nestjs/mongoose"
+		import { UsersController } from "./users.controller"
+		import { UserSchema } from "./users.model"
+		import { UsersService } from "./users.service"
+		@Module({
+		  imports: [MongooseModule.forFeature([{ name: "user", schema: UserSchema }])],
+		  controllers: [UsersController],
+		  providers: [UsersService],
+		})
+		export class UsersModule {}
+		
+5-  En users.module.ts, exportamos el UsersService	
+
+
+		import { Module } from "@nestjs/common"
+		import { MongooseModule } from "@nestjs/mongoose"
+		import { UsersController } from "./users.controller"
+		import { UserSchema } from "./users.model"
+		import { UsersService } from "./users.service"
+		@Module({
+		  imports: [MongooseModule.forFeature([{ name: "user", schema: UserSchema }])],
+		  controllers: [UsersController],
+		  providers: [UsersService],
+		  exports: [UsersService],
+		})
+		export class UsersModule {}
+		
+		
+6- Creamos el servicios
+
+			users.service.ts
+			import { Injectable } from '@nestjs/common';
+			import { InjectModel } from '@nestjs/mongoose';
+			import { Model } from 'mongoose';
+			import { User } from './users.model';
+			@Injectable()
+			export class UsersService {
+			  constructor(@InjectModel('user') private readonly userModel: Model<User>) {}
+			  async insertUser(userName: string, password: string) {
+				const username = userName.toLowerCase();
+				const newUser = new this.userModel({
+				  username,
+				  password,
+				});
+				await newUser.save();
+				return newUser;
+			  }
+			}
+			
+7- instale bcrypt y configure el controlador
+
+		npm install @types/bcrypt bcrypt
+		
+		users.controller.ts
+
+		import { Body, Controller, Post } from '@nestjs/common';
+		import { UsersService } from './users.service';
+		import * as bcrypt from 'bcrypt';
+		@Controller('users')
+		export class UsersController {
+		  constructor(private readonly usersService: UsersService) {}
+		  //post / signup
+		  @Post('/signup')
+		  async addUser(
+			@Body('password') userPassword: string,
+			@Body('username') userName: string,
+		  ) {
+			const saltOrRounds = 10;
+			const hashedPassword = await bcrypt.hash(userPassword, saltOrRounds);
+			const result = await this.usersService.insertUser(
+			  userName,
+			  hashedPassword,
+			);
+			return {
+			  msg: 'User successfully registered',
+			  userId: result.id,
+			  userName: result.username
+			};
+		  }
+		}
+
+			
+				
+8- Agregar el  UsersModule al arreglo @Module() de importaciones del decorador en 
+
+		app.module.ts.		
+
+		import { Module } from "@nestjs/common"
+		import { MongooseModule } from "@nestjs/mongoose"
+		import { AppController } from "./app.controller"
+		import { AppService } from "./app.service"
+		import { UsersModule } from "./users/users.module"
+
+		@Module({
+		  imports: [
+			MongooseModule.forRoot(
+			  "mongodb+srv://<username>:<password>@cluster0.kngtf.mongodb.net/session-auth?retryWrites=true&w=majority"
+			),
+			UsersModule,
+		  ],
+		  controllers: [AppController],
+		  providers: [AppService],
+		})
+		export class AppModule {}
+		
+		
+9- Agregar una función getUser a su UsersService con el método findOne para encontrar un usuario por nombre de usuario		
+
+		import { Injectable } from '@nestjs/common';
+		import { InjectModel } from '@nestjs/mongoose';
+		import { Model } from 'mongoose';
+		import { User } from './users.model';
+		@Injectable()
+		export class UsersService {
+		  constructor(@InjectModel('user') private readonly userModel: Model<User>) {}
+		  async insertUser(userName: string, password: string) {
+			const username = userName.toLowerCase();
+			const newUser = new this.userModel({
+			  username,
+			  password,
+			});
+			await newUser.save();
+			return newUser;
+		  }
+		  async getUser(userName: string) {
+			const username = userName.toLowerCase();
+			const user = await this.userModel.findOne({ username });
+			return user;
+		  }
+		}
+
+
+
+						Crear módulo de autenticación
+						-----------------------------
+						
+						
+10- Crea un módulo y un servicio de autenticación específicamente para todas las autenticaciones/verificaciones
+
+			nest g module auth
+			nest g service auth
+		
+11- En auth.module.ts  agregue UsersModule a la matriz de importaciones
+		
+		
+		auth.module.ts
+		
+		import { Module } from "@nestjs/common"
+		import { UsersModule } from "src/users/users.module"
+		import { AuthService } from "./auth.service"
+
+		@Module({
+		  imports: [UsersModule],
+		  providers: [AuthService],
+		})
+		export class AuthModule {}
+
+
+12- En el archivo auth.service.ts, llame al constructor para que pueda inyectar la clase  UsersService y agregue un método de validación que tomará
+ un nombre de usuario y una contraseña. Para agregar algunas validaciones básicas, verifique si el usuario existe en la base de datos y compare
+ la contraseña dada con la de su base de datos para asegurarse de que coincida. Si existe, devuelva el usuario en el objeto request.user; 
+ de lo contrario, devuelva nulo.
+ 
+		auth.service.ts
+		
+		   import { Injectable, NotAcceptableException } from '@nestjs/common';
+			import { UsersService } from 'src/users/users.service';
+			import * as bcrypt from 'bcrypt';
+
+			@Injectable()
+			export class AuthService {
+			  constructor(private readonly usersService: UsersService) {}
+			  async validateUser(username: string, password: string): Promise<any> {
+				const user = await this.usersService.getUser(username);
+				const passwordValid = await bcrypt.compare(password, user.password)
+				if (!user) {
+					throw new NotAcceptableException('could not find the user');
+				  }
+				if (user && passwordValid) {
+				  return {
+					userId: user.id,
+					userName: user.username
+				  };
+				}
+				return null;
+			  }
+			}
+			
+			
+			
+13- Crea un nuevo archivo y asígnele el nombre local.strategy.ts. Este archivo representará la estrategia de Passport.js, que instaló anteriormente,
+ es decir, el local strategy			
+ 
+		local.strategy.ts
+		
+		   import { Injectable, UnauthorizedException } from '@nestjs/common';
+			import { PassportStrategy } from '@nestjs/passport';
+			import { Strategy } from 'passport-local';
+			import { AuthService } from './auth.service';
+			@Injectable()
+			export class LocalStrategy extends PassportStrategy(Strategy) {
+			  constructor(private readonly authService: AuthService) {
+				super();
+			  }
+			  async validate(username: string, password: string): Promise<any> {
+				const userName = username.toLowerCase();
+				const user = await this.authService.validateUser(userName, password);
+				if (!user) {
+				  throw new UnauthorizedException();
+				}
+				return user;
+			  }
+			}
+
+
+14- Vuelva a su archivo auth.module.ts. Agregue PassportModule a las importaciones y LocalStrategy a los proveedores.
+
+		auth.module.ts
+		
+		import { Module } from "@nestjs/common"
+		import { PassportModule } from "@nestjs/passport"
+		import { UsersModule } from "src/users/users.module"
+		import { AuthService } from "./auth.service"
+		import { LocalStrategy } from "./local.strategy"
+
+		@Module({
+		  imports: [UsersModule, PassportModule],
+		  providers: [AuthService, LocalStrategy],
+		})
+		export class AuthModule {}
+		
+15- Ahora, agregue la ruta de inicio de sesión a su users.controller.ts:
+						
+			users.controller.ts
+			
+			import {
+			  Body,
+			  Controller,
+			  Post,
+			  Request,
+			} from '@nestjs/common';
+			import * as bcrypt from 'bcrypt';
+			import { UsersService } from './users.service';
+			@Controller('users')
+			export class UsersController {
+			  constructor(private readonly usersService: UsersService) {}
+			  //post / signup
+			  @Post('/signup')
+			  async addUser(
+				@Body('password') userPassword: string,
+				@Body('username') userName: string,
+			  ) {
+				const saltOrRounds = 10;
+				const hashedPassword = await bcrypt.hash(userPassword, saltOrRounds);
+				const result = await this.usersService.insertUser(
+				  userName,
+				  hashedPassword,
+				);
+				return {
+				  msg: 'User successfully registered',
+				  userId: result.id,
+				  userName: result.username
+				};
+			  }
+			  //Post / Login
+			  @Post('/login')
+			  login(@Request() req): any {
+				return {User: req.user,
+						msg: 'User logged in'};
+			  }
+			}
+
+		
+16- Ahora que ha implementado todo esto, aún no puede iniciar sesión como usuario porque no hay nada que active la ruta de inicio de sesión. 
+	Vamos a usar Guardias para lograr eso:
+
+	Cree un archivo y asígnele el nombre local.auth.guard.ts, luego una clase LocalAuthGuard que se extienda AuthGuard desde NestJS/passport, donde 
+	proporcionará el nombre de la estrategia y pasará el nombre de su estrategia, local. 
+	
+	local.auth.guard.ts.
+	
+	import { Injectable } from "@nestjs/common"
+	import { AuthGuard } from "@nestjs/passport"
+	@Injectable()
+	export class LocalAuthGuard extends AuthGuard("local") {}
+
+17- Agregue el decorador UseGuard a su ruta de inicio de sesión en el archivo users.controller.ts y pase el archivo LocalAuthGuard.
+	users.controller.ts
+	
+	users.controller.ts
+	
+	   import {
+      Body,
+      Controller,
+      Post,
+      UseGuards,
+      Request,
+    } from '@nestjs/common';
+    import * as bcrypt from 'bcrypt';
+    import { LocalAuthGuard } from 'src/auth/local.auth.guard';
+    import { UsersService } from './users.service';
+    @Controller('users')
+    export class UsersController {
+      constructor(private readonly usersService: UsersService) {}
+      //post / signup
+      @Post('/signup')
+      async addUser(
+        @Body('password') userPassword: string,
+        @Body('username') userName: string,
+      ) {
+        const saltOrRounds = 10;
+        const hashedPassword = await bcrypt.hash(userPassword, saltOrRounds);
+        const result = await this.usersService.insertUser(
+          userName,
+          hashedPassword,
+        );
+        return {
+          msg: 'User successfully registered',
+          userId: result.id,
+          userName: result.username
+        };
+      }
+      //Post / Login
+      @UseGuards(LocalAuthGuard)
+      @Post('/login')
+      login(@Request() req): any {
+        return {User: req.user,
+                msg: 'User logged in'};
+      }
+    }
+
+
+
+ ----------------------------- Proteger rutas de autenticación ----------------------------------------
+ 
+ 
+ 18- Vaya a su archivo users.controller.ts y agregue otra ruta: asígnele el nombre 'protegido' y haga que devuelva el objeto req.user.
+		
+		
+		users.controller.ts
+		
+		   import {
+			  Body,
+			  Controller,
+			  Get,
+			  Post,
+			  UseGuards,
+			  Request,
+			} from '@nestjs/common';
+			import * as bcrypt from 'bcrypt';
+			import { LocalAuthGuard } from 'src/auth/local.auth.guard';
+			import { UsersService } from './users.service';
+			@Controller('users')
+			export class UsersController {
+			  constructor(private readonly usersService: UsersService) {}
+			  //signup
+			  @Post('/signup')
+			  async addUser(
+				@Body('password') userPassword: string,
+				@Body('username') userName: string,
+			  ) {
+				const saltOrRounds = 10;
+				const hashedPassword = await bcrypt.hash(userPassword, saltOrRounds);
+				const result = await this.usersService.insertUser(
+				  userName,
+				  hashedPassword,
+				);
+				return {
+				  msg: 'User successfully registered',
+				  userId: result.id,
+				  userName: result.username
+				};
+			  }
+			  //Post / Login
+			  @UseGuards(LocalAuthGuard)
+			  @Post('/login')
+			  login(@Request() req): any {
+				return {User: req.user,
+						msg: 'User logged in'};
+			  }
+			// Get / protected
+			  @Get('/protected')
+			  getHello(@Request() req): string {
+				return req.user;
+			  }
+			}
+
+	La ruta protegida en el código anterior devolverá un objeto vacío en lugar de devolver los detalles del usuario cuando un usuario que haya iniciado
+	sesión le haga una solicitud porque ya perdió el inicio de sesión. 	Para solucionarlo, aquí es donde entra en juego la AUTENTICACIÓN BASADA EN SESIONES.
+	En la autenticación basada en sesión, cuando un usuario inicia sesión, el usuario se guarda en una sesión para que cualquier solicitud posterior
+	del usuario después del inicio de sesión obtenga los detalles de la sesión y le otorgue un fácil acceso.
+	La sesión caduca cuando el usuario cierra la sesión.
+	
+
+20- Instale express-session y sus tipos con el siguiente comando: npm install express-session @types/express-session
+
+		Es preferible mantener su clave secreta en sus variables de entorno.
+		
+		main.ts
+		-------
+		import { NestFactory } from "@nestjs/core"
+		import { AppModule } from "./app.module"
+		import * as session from "express-session"
+		import * as passport from "passport"
+		async function bootstrap() {
+		  const app = await NestFactory.create(AppModule)
+		  app.use(
+			session({
+			  secret: "keyboard",
+			  resave: false,
+			  saveUninitialized: false,
+			})
+		  )
+		  app.use(passport.initialize())
+		  app.use(passport.session())
+
+		  await app.listen(3000)
+		}
+		bootstrap()
+		
+		
+21- Agregue un nuevo archivo, authenticated.guard.ts, en su carpeta auth. Y cree un nuevo Guard que verifique si hay una sesión para el usuario que
+	realiza la solicitud; asígnele un nombre authenticatedGuard.
+
+	authenticated.guard.ts
+	
+	import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common"
+
+	@Injectable()
+	export class AuthenticatedGuard implements CanActivate {
+	  async canActivate(context: ExecutionContext) {
+		const request = context.switchToHttp().getRequest()
+		return request.isAuthenticated()
+	  }
+	}
+	
+	
+	En el código anterior, la solicitud se obtiene del contexto de ejecución y se verifica si está autenticada. La función  isAuthenticated() viene
+	de passport.js automáticamente; dice. "¡Oye! ¿Existe una sesión para este usuario? Si es así, continúa
+
+22- Para activar el inicio de sesión, vaya a  users.controller.ts y configure lo siguiente:
+
+		importar authenticated desde authenticated.guard.ts;
+		agregue el decorador useGuard a la ruta protected; y,
+		pasar AuthenticatedGuard
+		
+		users.controller.ts
+		-------------------
+		
+		   import {
+			  Body,
+			  Controller,
+			  Get,
+			  Post,
+			  UseGuards,
+			  Request,
+			} from '@nestjs/common';
+			import * as bcrypt from 'bcrypt';
+			import { AuthenticatedGuard } from 'src/auth/authenticated.guard';
+			import { LocalAuthGuard } from 'src/auth/local.auth.guard';
+			import { UsersService } from './users.service';
+			@Controller('users')
+			export class UsersController {
+			  constructor(private readonly usersService: UsersService) {}
+			  
+			  //signup
+			  @Post('/signup')
+			  async addUser(
+				@Body('password') userPassword: string,
+				@Body('username') userName: string,
+			  ) {
+				const saltOrRounds = 10;
+				const hashedPassword = await bcrypt.hash(userPassword, saltOrRounds);
+				const result = await this.usersService.insertUser(
+				  userName,
+				  hashedPassword,
+				);
+				return {
+				  msg: 'User successfully registered',
+				  userId: result.id,
+				  userName: result.username
+				};
+			  }
+			  
+			  //Post / Login
+			  @UseGuards(LocalAuthGuard)
+			  @Post('/login')
+			  login(@Request() req): any {
+				return {User: req.user,
+						msg: 'User logged in'};
+			  }
+			  
+			  //Get / protected
+			  @UseGuards(AuthenticatedGuard)
+			  @Get('/protected')
+			  getHello(@Request() req): string {
+				return req.user;
+			  }
+			}
+
+
+
+		En este punto, todavía falla la App porque solo lo configuró express-session pero no lo implementó Cuando un usuario inicia sesión,
+		debe guardarlo en una sesión para que pueda acceder a otras rutas con la sesión.
+
+		Una cosa a tener en cuenta es que, de forma predeterminada, la biblioteca express-session almacena la sesión en la memoria del servidor web.
+		Antes de entrar en la sesión, debe serializar al usuario. A medida que sale de la sesión, deserializa al usuario.
+
+23- Por lo tanto, cree un nuevo
+		archivo en la carpeta de autenticación para serializador y deserializador, asígnele el nombre session.serializer.ts.
+
+
+		session.serializer.
+		------------------
+		
+		import { Injectable } from "@nestjs/common"
+		import { PassportSerializer } from "@nestjs/passport"
+
+		@Injectable()
+		export class SessionSerializer extends PassportSerializer {
+		  serializeUser(user: any, done: (err: Error, user: any) => void): any {
+			done(null, user)
+		  }
+		  deserializeUser(
+			payload: any,
+			done: (err: Error, payload: string) => void
+		  ): any {
+			done(null, payload)
+		  }
+		}
+
+	
+
+
+ 24- Vuelva a su archivo auth.module.ts, proporcione la clase SessionSerializer y agregue el método register al archivo PassportModule.
+ 
+		auth.module.ts
+		--------------
+		
+		import { Module } from "@nestjs/common"
+		import { PassportModule } from "@nestjs/passport"
+		import { UsersModule } from "src/users/users.module"
+		import { AuthService } from "./auth.service"
+		import { LocalStrategy } from "./local.strategy"
+		import { SessionSerializer } from "./session.serializer"
+
+		@Module({
+		  imports: [UsersModule, PassportModule.register({ session: true })],
+		  providers: [AuthService, LocalStrategy, SessionSerializer],
+		})
+		export class AuthModule {}
+		
+		
+25- Agregue algunos códigos dentro de LocalAuthGuard del archivo local.auth.guard.ts. Llame al método login y super pase la solicitud para activar el
+	inicio de sesión real mediante la creación de una sesión. Si desea utilizar sesiones, debe recordar activar el super.login().
+
+
+		local.auth.guard.ts
+		
+		import { ExecutionContext, Injectable } from '@nestjs/common';
+		import { AuthGuard } from '@nestjs/passport';
+		@Injectable()
+		export class LocalAuthGuard extends AuthGuard('local') {
+		  async canActivate(context: ExecutionContext) {
+			const result = (await super.canActivate(context)) as boolean;
+			const request = context.switchToHttp().getRequest();
+			await super.logIn(request);
+			return result;
+		  }
+		}
+
+Si inicia sesión ahora, verá la identificación de la sesión almacenada en una cookie, que es solo una clave para el almacenamiento de la sesión,
+ y la cookie se guarda en el navegador. La cookie se adjunta automáticamente al resto de la solicitud. Ahora que la sesión está funcionando, puede acceder
+ a la ruta protegida; devolverá los detalles del usuario esperado.
+ 
+                     --------------------  CERRAR SESIÓN DE USUARIOS -------------------------
+					 
+Como se mencionó anteriormente, una vez que un usuario cierra la sesión, destruye todas las sesiones. Para cerrar la sesión de un usuario, vaya al
+ archivo users.controller.ts, agregue una ruta de cierre de sesión y llame al método req.session.session().  Puede devolver un mensaje notificando que
+ la sesión del usuario ha finalizado.				 
+ 
+ 
+		users.controller.ts
+		-------------------
+		
+		import {
+		  Body,
+		  Controller,
+		  Get,
+		  Post,
+		  UseGuards,
+		  Request,
+		} from '@nestjs/common';
+		import * as bcrypt from 'bcrypt';
+		import { AuthenticatedGuard } from 'src/auth/authenticated.guard';
+		import { LocalAuthGuard } from 'src/auth/local.auth.guard';
+		import { UsersService } from './users.service';
+		@Controller('users')
+		export class UsersController {
+		  constructor(private readonly usersService: UsersService) {}
+		  //signup
+		  @Post('/signup')
+		  async addUser(
+			@Body('password') userPassword: string,
+			@Body('username') userName: string,
+		  ) {
+			const saltOrRounds = 10;
+			const hashedPassword = await bcrypt.hash(userPassword, saltOrRounds);
+			const result = await this.usersService.insertUser(
+			  userName,
+			  hashedPassword,
+			);
+			return {
+			  msg: 'User successfully registered',
+			  userId: result.id,
+			  userName: result.username
+			};
+		  }
+		  //Post / Login
+		  @UseGuards(LocalAuthGuard)
+		  @Post('/login')
+		  login(@Request() req): any {
+			return {User: req.user,
+					msg: 'User logged in'};
+		  }
+		   //Get / protected
+		  @UseGuards(AuthenticatedGuard)
+		  @Get('/protected')
+		  getHello(@Request() req): string {
+			return req.user;
+		  }
+		   //Get / logout
+		  @Get('/logout')
+			logout(@Request() req): any {
+			  req.session.destroy();
+			  return { msg: 'The user session has ended' }
+			}
+		}
+
+
+		
+		
