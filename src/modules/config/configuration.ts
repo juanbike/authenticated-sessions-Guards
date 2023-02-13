@@ -8,5 +8,6 @@ export default registerAs('app', () => ({
   port: process.env.APP_PORT,
   */
   //JWT_SECRET:process.env.JWT_SECRET,
+  port: process.env.APP_PORT,
   title:process.env.APP_TITLE,
 }));

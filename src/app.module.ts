@@ -21,7 +21,7 @@ import configuration from './modules/config/configuration';
   }),
 }),
     MongooseModule.forRoot(
-      'mongodb://127.0.0.1:27017/auth'
+      process.env.APP_URL
     ),  UsersModule, AuthModule], 
   controllers: [AppController],
   providers: [AppService]
